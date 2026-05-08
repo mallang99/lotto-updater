@@ -1,6 +1,7 @@
 import json
 import os
 import urllib.request
+import ssl
 import firebase_admin
 from firebase_admin import credentials, db
 
@@ -16,11 +17,27 @@ def get_latest_round():
 
 def fetch_lotto_data(round_no):
     url = f"https://www.dhlottery.co.kr/common.do?method=getLottoNumber&drwNo={round_no}"
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=10) as res:
-        data = json.loads(res.read().decode("utf-8"))
-    if data.get("returnValue") == "success":
-        return data
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.dhlottery.co.kr/gameResult.do?method=byWin"
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=ctx) as res:
+            raw = res.read().decode("utf-8")
+            print(f"  Response length: {len(raw)}, starts with: {raw[:50]}")
+            if raw.strip().startswith("{"):
+                data = json.loads(raw)
+                if data.get("returnValue") == "success":
+                    return data
+            else:
+                print(f"  Not JSON response")
+    except Exception as e:
+        print(f"  Error fetching round {round_no}: {e}")
     return None
 
 def main():
@@ -32,14 +49,14 @@ def main():
     latest_round = get_latest_round()
     print(f"Latest round estimate: {latest_round}")
     data = None
-    for r in [latest_round, latest_round - 1]:
-        print(f"  Fetching round {r}...")
+    for r in [latest_round, latest_round - 1, latest_round - 2]:
+        print(f"  Trying round {r}...")
         data = fetch_lotto_data(r)
         if data:
-            print(f"  OK: {data['drwtNo1']},{data['drwtNo2']},{data['drwtNo3']},{data['drwtNo4']},{data['drwtNo5']},{data['drwtNo6']}+{data['bnusNo']}")
+            print(f"  Found: {data['drwtNo1']},{data['drwtNo2']},{data['drwtNo3']},{data['drwtNo4']},{data['drwtNo5']},{data['drwtNo6']}+{data['bnusNo']}")
             break
     if not data:
-        print("Failed to fetch data")
+        print("Failed to fetch any round data")
         return
     ref = db.reference("latestDraw")
     ref.set({
